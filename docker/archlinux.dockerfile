@@ -17,22 +17,11 @@ pacman -Syu --disable-download-timeout --noconfirm
 pacman -Scc --noconfirm
 _DEPS
 
-FROM sunshine-base AS sunshine-build
-
-ARG BRANCH
-ARG BUILD_VERSION
-ARG COMMIT
-ARG CLONE_URL
-# note: BUILD_VERSION may be blank
-
-ENV BRANCH=${BRANCH}
-ENV BUILD_VERSION=${BUILD_VERSION}
-ENV COMMIT=${COMMIT}
-ENV CLONE_URL=${CLONE_URL}
+FROM sunshine-base AS sunshine-deps
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# hadolint ignore=SC2016
+# Install dependencies first - this layer will be cached
 RUN <<_SETUP
 #!/bin/bash
 set -e
@@ -42,6 +31,7 @@ useradd -m builder
 echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
 # patch the build flags
+# shellcheck disable=SC2016
 sed -i 's,#MAKEFLAGS="-j2",MAKEFLAGS="-j$(nproc)",g' /etc/makepkg.conf
 
 # install dependencies
@@ -54,6 +44,26 @@ pacman -Syu --disable-download-timeout --needed --noconfirm \
   xorg-server-xvfb
 pacman -Scc --noconfirm
 _SETUP
+
+FROM sunshine-deps AS sunshine-build
+
+ARG BRANCH
+ARG BUILD_VERSION
+ARG COMMIT
+ARG CLONE_URL
+# note: BUILD_VERSION may be blank
+
+ENV BRANCH=${BRANCH}
+ENV BUILD_VERSION=${BUILD_VERSION}
+ENV COMMIT=${COMMIT}
+ENV CLONE_URL=${CLONE_URL}
+
+# PKGBUILD options
+ENV _use_cuda=true
+ENV _run_unit_tests=true
+ENV _support_headless_testing=true
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Setup builder user
 USER builder
