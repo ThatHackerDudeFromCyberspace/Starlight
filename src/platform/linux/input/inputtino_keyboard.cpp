@@ -337,6 +337,10 @@ static constexpr auto keycodes = init_keycodes();
         return;
       }
 
+      BOOST_LOG(debug) << "HD: Got modcode: "sv << modcode;
+      BOOST_LOG(debug) << "HD: Got keysym: "sv << keycodes[modcode].keysym;
+      BOOST_LOG(debug) << "HD: Sending: "sv << keycode_x;
+
       XTestFakeKeyEvent(raw->XDisplay, keycode_x, !release, CurrentTime);
   
       XFlush(raw->XDisplay);
