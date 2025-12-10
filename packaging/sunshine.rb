@@ -1,6 +1,10 @@
 require "language/node"
 
-class @PROJECT_NAME@ < Formula
+class Sunshine < Formula
+  GCC_VERSION = "14".freeze
+  GCC_FORMULA = "gcc@#{GCC_VERSION}".freeze
+  IS_UPSTREAM_REPO = ENV.fetch("GITHUB_REPOSITORY", "") == "LizardByte/Sunshine"
+
   # conflicts_with "sunshine", because: "sunshine and sunshine-beta cannot be installed at the same time"
   desc "@PROJECT_DESCRIPTION@"
   homepage "@PROJECT_HOMEPAGE_URL@"
@@ -31,13 +35,20 @@ class @PROJECT_NAME@ < Formula
   depends_on "graphviz" => :build
   depends_on "node" => :build
   depends_on "pkgconf" => :build
+  depends_on "gcovr" => :test
   depends_on "curl"
   depends_on "miniupnpc"
   depends_on "openssl"
   depends_on "opus"
+  depends_on "boost" => :recommended
   depends_on "icu4c" => :recommended
 
+  on_macos do
+    depends_on "llvm" => [:build, :test]
+  end
+
   on_linux do
+    depends_on GCC_FORMULA => [:build, :test]
     depends_on "avahi"
     depends_on "gnu-which"
     depends_on "libayatana-appindicator"
@@ -75,6 +86,13 @@ class @PROJECT_NAME@ < Formula
     ENV["BUILD_VERSION"] = "@BUILD_VERSION@"
     ENV["COMMIT"] = "@GITHUB_COMMIT@"
 
+    if OS.linux?
+      # Use GCC because gcov from llvm cannot handle our paths
+      gcc_path = Formula[GCC_FORMULA]
+      ENV["CC"] = "#{gcc_path.opt_bin}/gcc-#{GCC_VERSION}"
+      ENV["CXX"] = "#{gcc_path.opt_bin}/g++-#{GCC_VERSION}"
+    end
+
     args = %W[
       -DBUILD_WERROR=ON
       -DCMAKE_CXX_STANDARD=23
@@ -87,6 +105,14 @@ class @PROJECT_NAME@ < Formula
       -DSUNSHINE_PUBLISHER_WEBSITE='https://app.lizardbyte.dev'
       -DSUNSHINE_PUBLISHER_ISSUE_URL='https://app.lizardbyte.dev/support'
     ]
+
+    if IS_UPSTREAM_REPO
+      args << "-DBUILD_TESTS=ON"
+      ohai "Building tests: enabled"
+    else
+      args << "-DBUILD_TESTS=OFF"
+      ohai "Building tests: disabled"
+    end
 
     if build.with? "docs"
       ohai "Building docs: enabled"
@@ -124,7 +150,8 @@ class @PROJECT_NAME@ < Formula
 
     system "make", "-C", "build"
     system "make", "-C", "build", "install"
-    bin.install "build/tests/test_sunshine"
+
+    bin.install "build/tests/test_sunshine" if IS_UPSTREAM_REPO
 
     # codesign the binary on intel macs
     system "codesign", "-s", "-", "--force", "--deep", bin/"sunshine" if OS.mac? && Hardware::CPU.intel?
@@ -167,8 +194,34 @@ class @PROJECT_NAME@ < Formula
     # test that the binary runs at all
     system bin/"sunshine", "--version"
 
-    # run the test suite
-    system bin/"test_sunshine", "--gtest_color=yes", "--gtest_output=xml:test_results.xml"
-    assert_path_exists testpath/"test_results.xml"
+    if IS_UPSTREAM_REPO
+      # run the test suite
+      system bin/"test_sunshine", "--gtest_color=yes", "--gtest_output=xml:tests/test_results.xml"
+      assert_path_exists File.join(testpath, "tests", "test_results.xml")
+
+      # create gcovr report
+      buildpath = ENV.fetch("HOMEBREW_BUILDPATH", "")
+      unless buildpath.empty?
+        # Change to the source directory for gcovr to work properly
+        cd "#{buildpath}/build" do
+          # Use GCC version to match what was used during compilation
+          if OS.linux?
+            gcc_path = Formula[GCC_FORMULA]
+            gcov_executable = "#{gcc_path.opt_bin}/gcov-#{GCC_VERSION}"
+
+            system "gcovr", ".",
+              "-r", "../src",
+              "--gcov-executable", gcov_executable,
+              "--exclude-noncode-lines",
+              "--exclude-throw-branches",
+              "--exclude-unreachable-branches",
+              "--xml-pretty",
+              "-o=#{testpath}/coverage.xml"
+
+            assert_path_exists File.join(testpath, "coverage.xml")
+          end
+        end
+      end
+    end
   end
 end

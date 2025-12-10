@@ -23,15 +23,6 @@ sudo_cmd="sudo"
 ubuntu_test_repo=0
 step="all"
 
-# common variables
-gcc_alternative_files=(
-  "gcc"
-  "g++"
-  "gcov"
-  "gcc-ar"
-  "gcc-ranlib"
-)
-
 # Reusable function to detect nvcc path
 function detect_nvcc_path() {
   local nvcc_path=""
@@ -221,6 +212,7 @@ function add_debian_based_deps() {
     "cmake"
     "desktop-file-utils"
     "doxygen"
+    "file"
     "flex"  # required if we need to compile doxygen
     "gcc-${gcc_version}"
     "g++-${gcc_version}"
@@ -237,6 +229,8 @@ function add_debian_based_deps() {
     "libopus-dev"
     "libpulse-dev"
     "libssl-dev"
+    "libsystemd-dev"
+    "libudev-dev"
     "libwayland-dev"  # Wayland
     "libx11-dev"  # X11
     "libxcb-shm0-dev"  # X11
@@ -247,6 +241,7 @@ function add_debian_based_deps() {
     "libxtst-dev"  # X11
     "ninja-build"
     "npm"  # web-ui
+    "systemd"
     "udev"
     "wget"  # necessary for cuda install with `run` file
     "xvfb"  # necessary for headless unit testing
@@ -271,6 +266,7 @@ function add_debian_deps() {
   add_debian_based_deps
   dependencies+=(
     "libayatana-appindicator3-dev"
+    "systemd-dev"
   )
 }
 
@@ -335,6 +331,11 @@ function install_cuda() {
     return
   fi
 
+  local cuda_override_arg=""
+  if [ "$distro" == "fedora" ]; then
+    cuda_override_arg="--override"
+  fi
+
   local cuda_prefix="https://developer.download.nvidia.com/compute/cuda/"
   local cuda_suffix=""
   if [ "$architecture" == "aarch64" ]; then
@@ -366,7 +367,7 @@ function install_cuda() {
   echo "cuda url: ${url}"
   wget "$url" --progress=bar:force:noscroll -q --show-progress -O "${build_dir}/cuda.run"
   chmod a+x "${build_dir}/cuda.run"
-  "${build_dir}/cuda.run" --silent --toolkit --toolkitpath="${build_dir}/cuda" --no-opengl-libs --no-man-page --no-drm
+  "${build_dir}/cuda.run" --silent --toolkit --toolkitpath="${build_dir}/cuda" --no-opengl-libs --no-man-page --no-drm "$cuda_override_arg"
   rm "${build_dir}/cuda.run"
 
   # run cuda patches
@@ -447,24 +448,8 @@ function run_step_deps() {
   source ~/.bashrc
 
   #set gcc version based on distros
-  if [ "$distro" == "arch" ]; then
-    export CC=gcc-14
-    export CXX=g++-14
-  elif [ "$distro" == "debian" ] || [ "$distro" == "ubuntu" ]; then
-    for file in "${gcc_alternative_files[@]}"; do
-      file_path="/etc/alternatives/$file"
-      if [ -e "$file_path" ]; then
-        ${sudo_cmd} mv "$file_path" "$file_path.bak"
-      fi
-    done
-
-    ${sudo_cmd} update-alternatives --install \
-      /usr/bin/gcc gcc /usr/bin/gcc-${gcc_version} 100 \
-      --slave /usr/bin/g++ g++ /usr/bin/g++-${gcc_version} \
-      --slave /usr/bin/gcov gcov /usr/bin/gcov-${gcc_version} \
-      --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-${gcc_version} \
-      --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-${gcc_version}
-  fi
+  export CC=gcc-${gcc_version}
+  export CXX=g++-${gcc_version}
 
   # compile cmake if the version is too low
   if ! check_version "cmake" "$cmake_min" "inf"; then
@@ -532,6 +517,10 @@ function run_step_cmake() {
     nvcc_path=$(detect_nvcc_path)
   fi
 
+  #set gcc version based on distros
+  export CC=gcc-${gcc_version}
+  export CXX=g++-${gcc_version}
+
   # prepare CMAKE args
   cmake_args=(
     "-B=build"
@@ -574,6 +563,7 @@ function run_step_cmake() {
     cmake_args+=("-DSUNSHINE_ENABLE_CUDA=ON")
     if [ -n "$nvcc_path" ]; then
       cmake_args+=("-DCMAKE_CUDA_COMPILER:PATH=$nvcc_path")
+      cmake_args+=("-DCMAKE_CUDA_HOST_COMPILER=gcc-${gcc_version}")
     fi
   else
     cmake_args+=("-DSUNSHINE_ENABLE_CUDA=OFF")
@@ -616,17 +606,6 @@ function run_step_cleanup() {
   echo "Running step: Cleanup"
 
   if [ "$skip_cleanup" == 0 ]; then
-    # Restore the original gcc alternatives
-    if [ "$distro" == "debian" ] || [ "$distro" == "ubuntu" ]; then
-      for file in "${gcc_alternative_files[@]}"; do
-        if [ -e "/etc/alternatives/$file.bak" ]; then
-          ${sudo_cmd} mv "/etc/alternatives/$file.bak" "/etc/alternatives/$file"
-        else
-          ${sudo_cmd} rm "/etc/alternatives/$file"
-        fi
-      done
-    fi
-
     # restore the math-vector.h file
     if [ "$architecture" == "aarch64" ] && [ -n "$math_vector_file" ]; then
       ${sudo_cmd} mv -f "$math_vector_file.bak" "$math_vector_file"
@@ -745,6 +724,15 @@ elif grep -q "Ubuntu 25.04" /etc/os-release; then
   cuda_build="575.57.08"
   gcc_version="14"
   nvm_node=0
+elif grep -q "Ubuntu 25.10" /etc/os-release; then
+  distro="ubuntu"
+  version="25.10"
+  package_update_command="${sudo_cmd} apt-get update"
+  package_install_command="${sudo_cmd} apt-get install -y"
+  cuda_version="12.9.1"
+  cuda_build="575.57.08"
+  gcc_version="14"
+  nvm_node=0
 else
   echo "Unsupported Distro or Version"
   exit 1
@@ -761,9 +749,18 @@ if [ "$architecture" != "x86_64" ] && [ "$architecture" != "aarch64" ]; then
   exit 1
 fi
 
+# export variables for github actions ci
+if [ -f "$GITHUB_ENV" ]; then
+  {
+    echo "CC=gcc-${gcc_version}"
+    echo "CXX=g++-${gcc_version}"
+    echo "GCC_VERSION=${gcc_version}"
+  } >> "$GITHUB_ENV"
+fi
+
 # get directory of this script
 script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-build_dir="$script_dir/../build"
+build_dir=$(readlink -f "$script_dir/../build")
 echo "Script Directory: $script_dir"
 echo "Build Directory: $build_dir"
 mkdir -p "$build_dir"
