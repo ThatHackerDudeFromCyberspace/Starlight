@@ -9,7 +9,7 @@ set(BOOST_COMPONENTS
         locale
         log
         program_options
-        system
+#        system
 )
 # system is not used by Sunshine, but by Simple-Web-Server, added here for convenience
 
