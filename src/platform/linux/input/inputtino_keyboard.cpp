@@ -181,7 +181,7 @@ static constexpr std::array<keycode_t, 0xE3> init_keycodes() {
   __CONVERT(0xBF /* VKEY_OEM_2 */, KEY_SLASH, 0x70038, XK_slash);
   __CONVERT(0xC0 /* VKEY_OEM_3 */, KEY_GRAVE, 0x70035, XK_grave);
   __CONVERT(0xDB /* VKEY_OEM_4 */, KEY_LEFTBRACE, 0x7002F, XK_braceleft);
-  __CONVERT(0xDC /* VKEY_OEM_5 */, KEY_BACKSLASH, 0x70031, XK_backslash);
+  __CONVERT(0xDC /* VKEY_OEM_5 */, KEY_BACKSLASH, 0x70031, XK_asciitilde); //@HD-TODO
   __CONVERT(0xDD /* VKEY_OEM_6 */, KEY_RIGHTBRACE, 0x70030, XK_braceright);
   __CONVERT(0xDE /* VKEY_OEM_7 */, KEY_APOSTROPHE, 0x70034, XK_apostrophe);
   __CONVERT(0xE2 /* VKEY_NON_US_BACKSLASH */, KEY_102ND, 0x70064, XK_backslash);
@@ -336,6 +336,10 @@ static constexpr auto keycodes = init_keycodes();
       if(keycode_x == 0) {
         return;
       }
+
+      BOOST_LOG(debug) << "HD: Got modcode: "sv << modcode;
+      BOOST_LOG(debug) << "HD: Got keysym: "sv << keycodes[modcode].keysym;
+      BOOST_LOG(debug) << "HD: Sending: "sv << keycode_x;
 
       XTestFakeKeyEvent(raw->XDisplay, keycode_x, !release, CurrentTime);
   
